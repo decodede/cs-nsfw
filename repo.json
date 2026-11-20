@@ -1,0 +1,9 @@
+{
+	"name": "CS NSFW",
+	"description": "NSFW Cloudstream extensions",
+	"iconUrl": "https://hstream.moe/images/cropped-HS-1-192x192.webp",
+	"manifestVersion": 1,
+	"pluginLists": [
+		"https://raw.githubusercontent.com/decodede/cs-nsfw/builds/plugins.json"
+	]
+}
