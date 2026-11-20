@@ -55,7 +55,7 @@ class HStreamProvider : MainAPI() {
 
     private suspend fun getDoc(url: String): Document? = withContext(Dispatchers.IO) {
         runCatching {
-            val res = app.get(url, headers = browserHeaders, referer = "$mainUrl/", timeout = 20_000L)
+            val res = app.get(url, headers = browserHeaders, referer = "$mainUrl/", timeout = 20L)
             if (res.code == 200) res.document else null
         }.getOrNull()
     }
@@ -144,7 +144,7 @@ class HStreamProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit,
     ): Boolean = withContext(Dispatchers.IO) {
         val res = runCatching {
-            app.get(data, headers = browserHeaders, referer = "$mainUrl/", timeout = 20_000L)
+            app.get(data, headers = browserHeaders, referer = "$mainUrl/", timeout = 20L)
         }.getOrNull() ?: return@withContext false
         if (res.code != 200) return@withContext false
         val doc = runCatching { res.document }.getOrNull() ?: return@withContext false
@@ -167,7 +167,7 @@ class HStreamProvider : MainAPI() {
                 cookies = res.cookies,
                 referer = data,
                 json = payload,
-                timeout = 20_000L,
+                timeout = 20L,
             ).text
         }.getOrNull() ?: return@withContext false
         val json = runCatching { JSONObject(response) }.getOrNull() ?: return@withContext false
