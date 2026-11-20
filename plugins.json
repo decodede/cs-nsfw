@@ -9,7 +9,7 @@
             "decodede"
         ],
         "description": "hentai streaming (hstream.moe)",
-        "fileSize": 18182,
+        "fileSize": 18073,
         "repositoryUrl": "https://github.com/decodede/cs-nsfw",
         "language": "en",
         "tvTypes": [
@@ -17,6 +17,6 @@
         ],
         "iconUrl": "https://hstream.moe/images/cropped-HS-1-192x192.webp",
         "apiVersion": 1,
-        "fileHash": "sha256-3b5e8b8549623958846d272fd6078ce655dda30ee5632f5edf8b66cf98a0744e"
+        "fileHash": "sha256-bf081dddc729e7e394d12309653b2c6a17c3b650602b9228ea1c924cc63d0508"
     }
 ]
