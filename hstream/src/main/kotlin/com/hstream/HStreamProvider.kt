@@ -185,10 +185,6 @@ class HStreamProvider : MainAPI() {
         if (json.optInt("interpolated", 0) == 1) {
             links.add(StreamLink("$root/1080/manifest.mpd", "HStream 1080p", 1080, ExtractorLinkType.DASH))
             links.add(StreamLink("$root/2160/manifest.mpd", "HStream 2160p", 2160, ExtractorLinkType.DASH))
-            links.add(StreamLink("$root/1080i/manifest.mpd", "HStream 1080p 48fps", 1080, ExtractorLinkType.DASH))
-        }
-        if (json.optInt("interpolated_uhd", 0) == 1) {
-            links.add(StreamLink("$root/2160i/manifest.mpd", "HStream 2160p 48fps", 2160, ExtractorLinkType.DASH))
         }
 
         var emitted = false
@@ -202,7 +198,7 @@ class HStreamProvider : MainAPI() {
             )
             emitted = true
         }
-        subtitleCallback(SubtitleFile("English", "$root/eng.vtt"))
+        subtitleCallback(SubtitleFile("English", "$root/eng.ass"))
         emitted
     }
 
