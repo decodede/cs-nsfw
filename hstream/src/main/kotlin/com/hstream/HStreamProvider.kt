@@ -138,7 +138,7 @@ class HStreamProvider : MainAPI() {
         withContext(Dispatchers.IO) {
             if (query.isBlank()) return@withContext newSearchResponseList(emptyList(), false)
             val encoded = URLEncoder.encode(query.trim(), "UTF-8")
-            val doc = getDoc("$mainUrl/search?q=$encoded&page=$page")
+            val doc = getDoc("$mainUrl/search?search=$encoded&page=$page")
                 ?: return@withContext newSearchResponseList(emptyList(), false)
             val cards = parseCards(doc)
             newSearchResponseList(cards, cards.size >= 25)
