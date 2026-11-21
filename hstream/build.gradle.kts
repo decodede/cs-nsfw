@@ -1,4 +1,4 @@
-version = 2
+version = 3
 
 cloudstream {
     description = "hentai streaming (hstream.moe)"
@@ -6,7 +6,7 @@ cloudstream {
     authors = listOf("decodede")
     status = 1
     tvTypes = listOf(
-        "nsfw"
+        "NSFW"
     )
     iconUrl = "https://hstream.moe/images/cropped-HS-1-192x192.webp"
 }

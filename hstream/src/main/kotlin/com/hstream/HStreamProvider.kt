@@ -6,19 +6,27 @@ import com.lagradost.cloudstream3.LoadResponse
 import com.lagradost.cloudstream3.MainAPI
 import com.lagradost.cloudstream3.MainPageRequest
 import com.lagradost.cloudstream3.SearchResponse
+import com.lagradost.cloudstream3.SearchResponseList
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.mainPageOf
+import com.lagradost.cloudstream3.newEpisode
 import com.lagradost.cloudstream3.newHomePageResponse
 import com.lagradost.cloudstream3.newMovieLoadResponse
-import com.lagradost.cloudstream3.newMovieSearchResponse
+import com.lagradost.cloudstream3.newSearchResponseList
+import com.lagradost.cloudstream3.newSubtitleFile
+import com.lagradost.cloudstream3.newTvSeriesLoadResponse
+import com.lagradost.cloudstream3.newTvSeriesSearchResponse
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -40,11 +48,11 @@ class HStreamProvider : MainAPI() {
     override var hasMainPage = true
 
     override val mainPage = mainPageOf(
-        "4K 48FPS" to "4k-48fps",
-        "Uncensored" to "uncensored",
-        "MILF" to "milf",
-        "Succubus" to "succubus",
-        "Big Boobs" to "big-boobs",
+        "4k-48fps" to "4K 48FPS",
+        "uncensored" to "Uncensored",
+        "milf" to "MILF",
+        "succubus" to "Succubus",
+        "big-boobs" to "Big Boobs",
     )
 
     private val browserHeaders = mapOf(
@@ -52,13 +60,6 @@ class HStreamProvider : MainAPI() {
             "(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
         "Accept-Language" to "en-US,en;q=0.9",
     )
-
-    private suspend fun getDoc(url: String): Document? = withContext(Dispatchers.IO) {
-        runCatching {
-            val res = app.get(url, headers = browserHeaders, referer = "$mainUrl/", timeout = 20L)
-            if (res.code == 200) res.document else null
-        }.getOrNull()
-    }
 
     private fun absolute(url: String): String {
         val clean = url.trim()
@@ -71,8 +72,15 @@ class HStreamProvider : MainAPI() {
         }
     }
 
+    private suspend fun getDoc(url: String): Document? = withContext(Dispatchers.IO) {
+        runCatching {
+            val res = app.get(url, headers = browserHeaders, referer = "$mainUrl/", timeout = 20L)
+            if (res.code == 200) res.document else null
+        }.getOrNull()
+    }
+
     // Listing cards: <a href=".../hentai/slug-N"><img src="/images/..." alt="Title"></a>
-    private fun parseCards(doc: Document): List<SearchResponse> {
+    private fun parseCards(doc: Document, seriesSlug: String? = null): List<SearchResponse> {
         val cards = mutableListOf<SearchResponse>()
         val seen = mutableSetOf<String>()
         for (anchor in doc.select("a[href]")) {
@@ -80,19 +88,43 @@ class HStreamProvider : MainAPI() {
             if (!href.contains("/hentai/")) continue
             val slug = href.substringAfterLast("/hentai/").substringBefore('/').substringBefore('?')
             if (!Regex(".*-\\d+$").matches(slug)) continue
+            if (seriesSlug != null && !slug.startsWith("$seriesSlug-")) continue
             if (!seen.add(href)) continue
             val image = anchor.selectFirst("img[alt]") ?: continue
             val title = image.attr("alt").trim().ifBlank { anchor.attr("title").trim() }
             if (title.isBlank()) continue
             val poster = absolute(image.attr("src"))
             cards.add(
-                newMovieSearchResponse(title, href, TvType.Movie) {
+                newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
                     this.posterUrl = poster
                 }
             )
         }
         return cards
     }
+
+    private fun episodeNumber(slug: String): Int? =
+        Regex("-(\\d+)$").find(slug)?.groupValues?.get(1)?.toIntOrNull()
+
+    private fun seriesSlugOf(url: String): String =
+        url.substringAfterLast("/hentai/").substringBefore('/').substringBefore('?')
+
+    private fun fullPlot(doc: Document): String? {
+        val heading = doc.select("h2").firstOrNull {
+            it.text().trim().equals("Description", ignoreCase = true)
+        } ?: return null
+        return heading.parent()?.selectFirst("p")?.text()?.trim()?.takeIf { it.isNotBlank() }
+    }
+
+    private fun seriesTags(doc: Document): List<String> =
+        doc.select("a[href]")
+            .filter { it.attr("href").contains("tags%5B0%5D=") }
+            .map { it.text().trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+
+    private fun ogImage(doc: Document): String? =
+        doc.selectFirst("meta[property=\"og:image\"]")?.attr("content")?.trim()?.let(::absolute)
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse =
         withContext(Dispatchers.IO) {
@@ -102,34 +134,74 @@ class HStreamProvider : MainAPI() {
             newHomePageResponse(request, cards, cards.size >= 25)
         }
 
-    override suspend fun search(query: String): List<SearchResponse> = withContext(Dispatchers.IO) {
-        if (query.isBlank()) return@withContext emptyList()
-        val encoded = URLEncoder.encode(query.trim(), "UTF-8")
-        val doc = getDoc("$mainUrl/search?q=$encoded") ?: return@withContext emptyList()
-        parseCards(doc)
-    }
+    override suspend fun search(query: String, page: Int): SearchResponseList? =
+        withContext(Dispatchers.IO) {
+            if (query.isBlank()) return@withContext newSearchResponseList(emptyList(), false)
+            val encoded = URLEncoder.encode(query.trim(), "UTF-8")
+            val doc = getDoc("$mainUrl/search?q=$encoded&page=$page")
+                ?: return@withContext newSearchResponseList(emptyList(), false)
+            val cards = parseCards(doc)
+            newSearchResponseList(cards, cards.size >= 25)
+        }
+
+    override suspend fun search(query: String): List<SearchResponse> =
+        search(query, 1)?.items ?: emptyList()
 
     override suspend fun load(url: String): LoadResponse? = withContext(Dispatchers.IO) {
         val doc = getDoc(url) ?: return@withContext null
+        val slug = seriesSlugOf(url)
+        val seriesAnchor = doc.selectFirst("h1 a[href*=\"hentai\"]")
+        val isEpisode = seriesAnchor != null
+        val seriesUrl = seriesAnchor?.attr("href")?.let(::absolute)
+            ?.takeIf { it.contains("/hentai/") }
+            ?: "$mainUrl/hentai/${slug.replace(Regex("-\\d+$"), "")}"
+        val seriesSlug = seriesSlugOf(seriesUrl)
+        val seriesDoc = if (isEpisode) getDoc(seriesUrl) else doc
+
         val ld = doc.selectFirst("script[type=\"application/ld+json\"]")
             ?.data()
             ?.let { runCatching { JSONObject(it) }.getOrNull() }
-        val slug = url.substringAfterLast("/hentai/").substringBefore('/').substringBefore('?')
-        val title = ld?.optString("name")?.trim()?.takeIf { it.isNotBlank() }
+        val episodeTitle = ld?.optString("name")?.trim()?.takeIf { it.isNotBlank() }
             ?: doc.selectFirst("h1")?.text()?.trim()?.takeIf { it.isNotBlank() }
             ?: slug.replace('-', ' ')
-        val cover = doc.selectFirst("img[src*=\"cover-ep-\"]")?.attr("src")?.let(::absolute)
-        val poster = listOfNotNull(
-            cover?.takeIf { it.isNotBlank() },
-            ld?.optString("thumbnailUrl")?.trim()?.takeIf { it.isNotBlank() }?.let(::absolute),
-            doc.selectFirst("meta[property=\"og:image\"]")?.attr("content")?.trim()?.let(::absolute),
-        ).firstOrNull()
-        val plot = ld?.optString("description")?.trim()?.takeIf { it.isNotBlank() }
+        val title = seriesDoc?.selectFirst("h1")?.text()?.trim()?.takeIf { it.isNotBlank() }
+            ?: episodeTitle
+        val plot = fullPlot(seriesDoc ?: doc)
+            ?: ld?.optString("description")?.trim()?.takeIf { it.isNotBlank() }
             ?: doc.selectFirst("meta[property=\"og:description\"]")?.attr("content")?.trim()
-        val tags = stringList(ld?.optJSONArray("genre"))
+        val tags = if (isEpisode) {
+            stringList(ld?.optJSONArray("genre"))
+        } else {
+            seriesTags(doc)
+        }
         val year = ld?.optString("uploadDate")?.take(4)?.toIntOrNull()
+        val poster = listOfNotNull(
+            ogImage(doc),
+            ogImage(seriesDoc ?: doc),
+        ).firstOrNull()
 
-        newMovieLoadResponse(title, url, TvType.Movie, url) {
+        val listDoc = seriesDoc ?: doc
+        val episodes = parseCards(listDoc, seriesSlug).mapNotNull { card ->
+            val episodeSlug = seriesSlugOf(card.url)
+            val number = episodeNumber(episodeSlug) ?: return@mapNotNull null
+            newEpisode(card.url) {
+                this.name = card.name
+                this.season = 1
+                this.episode = number
+                this.posterUrl = card.posterUrl
+            }
+        }.sortedBy { it.episode }
+
+        if (episodes.isNotEmpty() && (isEpisode || listDoc === doc)) {
+            return@withContext newTvSeriesLoadResponse(title, seriesUrl, TvType.TvSeries, episodes) {
+                this.posterUrl = poster.orEmpty()
+                this.plot = plot
+                this.tags = tags.ifEmpty { null }
+                this.year = year
+            }
+        }
+
+        newMovieLoadResponse(episodeTitle, url, TvType.Movie, url) {
             this.posterUrl = poster.orEmpty()
             this.plot = plot
             this.tags = tags.ifEmpty { null }
@@ -174,20 +246,41 @@ class HStreamProvider : MainAPI() {
 
         val streamPath = json.optString("stream_url").trim().trimStart('/')
         if (streamPath.isBlank()) return@withContext false
-        val domains = stringList(json.optJSONArray("stream_domains")) +
-            stringList(json.optJSONArray("asia_stream_domains"))
-        val base = domains.firstOrNull { it.startsWith("http") }?.trimEnd('/')
-            ?: return@withContext false
+        val domains = (stringList(json.optJSONArray("stream_domains")) +
+            stringList(json.optJSONArray("asia_stream_domains")))
+            .filter { it.startsWith("http") }
+            .map { it.trimEnd('/') }
+            .distinct()
+        if (domains.isEmpty()) return@withContext false
+        val base = firstWorkingDomain(domains, streamPath) ?: domains.first()
         val root = "$base/$streamPath"
 
+        val variants = coroutineScope {
+            listOf(
+                "1080/manifest.mpd",
+                "1080i/manifest.mpd",
+                "2160/manifest.mpd",
+                "2160i/manifest.mpd",
+            ).map { path -> async { path to exists("$root/$path") } }.awaitAll()
+        }
+        val hasSubtitles = exists("$root/eng.ass")
+
         val links = mutableListOf<StreamLink>()
-        links.add(StreamLink("$root/x264.720p.mp4", "HStream 720p", 720, ExtractorLinkType.VIDEO))
-        if (json.optInt("interpolated", 0) == 1) {
-            links.add(StreamLink("$root/1080/manifest.mpd", "HStream 1080p", 1080, ExtractorLinkType.DASH))
-            links.add(StreamLink("$root/2160/manifest.mpd", "HStream 2160p", 2160, ExtractorLinkType.DASH))
+        links.add(StreamLink("$root/x264.720p.mp4", "HStream 720p (H.264)", 720, ExtractorLinkType.VIDEO))
+        for ((path, present) in variants) {
+            if (!present) continue
+            val height = if (path.startsWith("2160")) 2160 else 1080
+            val fps = if (path.contains("i/")) " 48fps" else ""
+            links.add(
+                StreamLink(
+                    "$root/$path",
+                    "HStream ${height}p$fps (AV1)",
+                    height,
+                    ExtractorLinkType.DASH,
+                )
+            )
         }
 
-        var emitted = false
         for (link in links.distinctBy { it.url }) {
             callback(
                 newExtractorLink("HStream", link.label, link.url, link.type) {
@@ -196,11 +289,33 @@ class HStreamProvider : MainAPI() {
                     this.headers = browserHeaders
                 }
             )
-            emitted = true
         }
-        subtitleCallback(SubtitleFile("English", "$root/eng.ass"))
-        emitted
+        if (hasSubtitles) {
+            subtitleCallback(newSubtitleFile("English", "$root/eng.ass"))
+        }
+        links.isNotEmpty()
     }
+
+    private suspend fun firstWorkingDomain(domains: List<String>, streamPath: String): String? =
+        coroutineScope {
+            domains.map { base ->
+                async {
+                    val code = runCatching {
+                        app.head(
+                            "$base/$streamPath/x264.720p.mp4",
+                            headers = browserHeaders,
+                            referer = "$mainUrl/",
+                            timeout = 6L,
+                        ).code
+                    }.getOrDefault(0)
+                    if (code in 200..299) base else null
+                }
+            }.awaitAll().firstOrNull { it != null }
+        }
+
+    private suspend fun exists(url: String): Boolean = runCatching {
+        app.head(url, headers = browserHeaders, referer = "$mainUrl/", timeout = 6L).code in 200..299
+    }.getOrDefault(false)
 
     private data class StreamLink(
         val url: String,
