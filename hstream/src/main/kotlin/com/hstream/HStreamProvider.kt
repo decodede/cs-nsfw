@@ -10,6 +10,7 @@ import com.lagradost.cloudstream3.SearchResponseList
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.mainPage
 import com.lagradost.cloudstream3.mainPageOf
 import com.lagradost.cloudstream3.newEpisode
 import com.lagradost.cloudstream3.newHomePageResponse
@@ -49,13 +50,13 @@ class HStreamProvider : MainAPI() {
     override var hasMainPage = true
 
     override val mainPage = mainPageOf(
-        "trending" to "Trending",
-        "popular-monthly" to "Popular Monthly",
-        "4k-48fps" to "4K 48FPS",
-        "uncensored" to "Uncensored",
-        "milf" to "MILF",
-        "succubus" to "Succubus",
-        "big-boobs" to "Big Boobs",
+        mainPage("trending", "Trending", true),
+        mainPage("popular-monthly", "Popular Monthly", true),
+        mainPage("4k-48fps", "4K 48FPS", true),
+        mainPage("uncensored", "Uncensored", true),
+        mainPage("milf", "MILF", true),
+        mainPage("succubus", "Succubus", true),
+        mainPage("big-boobs", "Big Boobs", true),
     )
 
     private val browserHeaders = mapOf(
