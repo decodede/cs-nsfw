@@ -175,10 +175,8 @@ class HStreamProvider : MainAPI() {
             seriesTags(doc)
         }
         val year = ld?.optString("uploadDate")?.take(4)?.toIntOrNull()
-        val poster = listOfNotNull(
-            ogImage(doc),
-            ogImage(seriesDoc ?: doc),
-        ).firstOrNull()
+        val poster = ogImage(if (isEpisode) seriesDoc ?: doc else doc)
+            ?: ogImage(doc)
 
         val listDoc = seriesDoc ?: doc
         val episodes = parseCards(listDoc, seriesSlug).mapNotNull { card ->
