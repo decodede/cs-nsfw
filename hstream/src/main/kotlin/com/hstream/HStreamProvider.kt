@@ -31,6 +31,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.nodes.Document
+import org.jsoup.nodes.Element
 import java.net.URLDecoder
 import java.net.URLEncoder
 
@@ -48,6 +49,8 @@ class HStreamProvider : MainAPI() {
     override var hasMainPage = true
 
     override val mainPage = mainPageOf(
+        "trending" to "Trending",
+        "popular-monthly" to "Popular Monthly",
         "4k-48fps" to "4K 48FPS",
         "uncensored" to "Uncensored",
         "milf" to "MILF",
@@ -80,10 +83,10 @@ class HStreamProvider : MainAPI() {
     }
 
     // Listing cards: <a href=".../hentai/slug-N"><img src="/images/..." alt="Title"></a>
-    private fun parseCards(doc: Document, seriesSlug: String? = null): List<SearchResponse> {
+    private fun parseCards(root: Element, seriesSlug: String? = null): List<SearchResponse> {
         val cards = mutableListOf<SearchResponse>()
         val seen = mutableSetOf<String>()
-        for (anchor in doc.select("a[href]")) {
+        for (anchor in root.select("a[href]")) {
             val href = absolute(anchor.attr("href"))
             if (!href.contains("/hentai/")) continue
             val slug = href.substringAfterLast("/hentai/").substringBefore('/').substringBefore('?')
@@ -126,12 +129,42 @@ class HStreamProvider : MainAPI() {
     private fun ogImage(doc: Document): String? =
         doc.selectFirst("meta[property=\"og:image\"]")?.attr("content")?.trim()?.let(::absolute)
 
+    // The site paginator only renders rel="next" when another page exists.
+    private fun hasNextPage(doc: Document): Boolean =
+        doc.selectFirst("a[rel=\"next\"]") != null
+
+    // Home "Trending" and "Popular Monthly" tabs only render 16 episodes.
+    private suspend fun homeTabCards(tabId: String): List<SearchResponse> {
+        val doc = getDoc("$mainUrl/") ?: return emptyList()
+        val pane = doc.getElementById(tabId) ?: return emptyList()
+        return parseCards(pane)
+    }
+
+    // Page 1 = home tab order, then the all-time view-count listing so the row can continue.
+    // Pages 2+ = the next view-count pages. The site exposes no paged daily/monthly ranking.
+    private suspend fun popularPage(page: Int, tabId: String): Pair<List<SearchResponse>, Boolean> {
+        val doc = getDoc("$mainUrl/search?order=view-count&page=$page")
+            ?: return emptyList<SearchResponse>() to false
+        val listing = parseCards(doc)
+        if (page > 1) return listing to hasNextPage(doc)
+        val cards = (homeTabCards(tabId) + listing).distinctBy { it.url }
+        return cards to hasNextPage(doc)
+    }
+
+    private suspend fun tagPage(page: Int, tag: String): Pair<List<SearchResponse>, Boolean> {
+        val doc = getDoc("$mainUrl/search?order=recently-uploaded&tags%5B0%5D=$tag&page=$page")
+            ?: return emptyList<SearchResponse>() to false
+        return parseCards(doc) to hasNextPage(doc)
+    }
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse =
         withContext(Dispatchers.IO) {
-            val url = "$mainUrl/search?order=recently-uploaded&tags%5B0%5D=${request.data}&page=$page"
-            val doc = getDoc(url) ?: return@withContext newHomePageResponse(request, emptyList(), false)
-            val cards = parseCards(doc)
-            newHomePageResponse(request, cards, cards.size >= 25)
+            val (cards, hasNext) = when (request.data) {
+                "trending" -> popularPage(page, "tabs-trending")
+                "popular-monthly" -> popularPage(page, "tabs-popular-monthly")
+                else -> tagPage(page, request.data)
+            }
+            newHomePageResponse(request, cards, hasNext)
         }
 
     override suspend fun search(query: String, page: Int): SearchResponseList? =
@@ -140,8 +173,7 @@ class HStreamProvider : MainAPI() {
             val encoded = URLEncoder.encode(query.trim(), "UTF-8")
             val doc = getDoc("$mainUrl/search?search=$encoded&page=$page")
                 ?: return@withContext newSearchResponseList(emptyList(), false)
-            val cards = parseCards(doc)
-            newSearchResponseList(cards, cards.size >= 25)
+            newSearchResponseList(parseCards(doc), hasNextPage(doc))
         }
 
     override suspend fun search(query: String): List<SearchResponse> =
